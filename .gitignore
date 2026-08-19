@@ -1,0 +1,14 @@
+node_modules
+dist
+
+# The learning record: project-owned, never committed.
+/data
+
+.env
+.env.local
+.DS_Store
+*.local
+
+# Published practice papers kept locally for reference only. Never served,
+# committed, or sent to a model.
+*.pdf
