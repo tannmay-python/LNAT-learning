@@ -69,10 +69,11 @@ export function MocksPage() {
       <section className="score-caveat">
         <WarningCircle size={20} weight="light" />
         <div>
-          <strong>A raw mark, and nothing dressed up as more.</strong>
+          <strong>A raw mark, plus a practice training band.</strong>
           <p>
             Section A is scored out of 42, which is exactly what the LNAT reports. No scaled score, percentile, or
-            conversion is published, so none is invented here. Section B carries no official mark at all — it is sent to
+            conversion is published, so the bands below are this app's training labels over that same 0–42 scale, not official
+            predictions. Section B carries no official mark at all — it is sent to
             universities as written, and any feedback in this app is formative practice, not an assessment.
           </p>
         </div>
@@ -89,6 +90,7 @@ export function MocksPage() {
               const assessment = mockAssessments.find((item) => item.sessionId === mock.id)
               const essay = essays.find((item) => item.sessionId === mock.id)
               const score = mock.sectionAScore ?? mock.correct ?? 0
+              const report = mock.scoreReport
               const gap = assessment ? score - assessment.expectedScore : null
               return (
                 <article className="history-row mock-history-row" key={mock.id}>
@@ -98,7 +100,9 @@ export function MocksPage() {
                     <small>{essay ? `Section B written — ${essay.wordCount} words` : 'Section A only'}</small>
                   </div>
                   <div className="mock-history-metrics">
-                    <span><small>Raw mark</small><strong>{score}</strong><em>{bandForScore(score).label}</em></span>
+                    <span><small>Raw mark</small><strong>{score}</strong><em>{report?.band.label ?? bandForScore(score).label}</em></span>
+                    <span><small>Decision pace</small><strong>{report ? `${report.averageSeconds}s` : '—'}</strong><em>{report ? `${report.overTimeQuestions} over budget` : 'not recorded'}</em></span>
+                    <span><small>PoE</small><strong>{report ? `${report.poeUsedQuestions}` : '—'}</strong><em>{report?.poeAccurateRate == null ? 'not tracked' : `${Math.round(report.poeAccurateRate * 100)}% accurate`}</em></span>
                     <span>
                       <small>Expected beforehand</small>
                       <strong>{assessment?.expectedScore ?? '—'}</strong>
@@ -107,6 +111,12 @@ export function MocksPage() {
                     <span><small>Form demand</small><strong className="demand">{assessment?.formDemand ?? '—'}</strong></span>
                   </div>
                   {assessment && <p className="mock-assessment-rationale">{assessment.rationale}</p>}
+                  {report && (
+                    <div className="history-training-plan">
+                      <strong>Next training sequence</strong>
+                      <ol>{report.trainingPlan.map((item) => <li key={item.title}><b>{item.title}</b> {item.action}</li>)}</ol>
+                    </div>
+                  )}
                 </article>
               )
             })}

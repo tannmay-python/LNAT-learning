@@ -50,6 +50,44 @@ export function InsightsPage() {
   const [error, setError] = useState('')
   const insights = useMemo(() => buildLearningInsights(attempts, sessions), [attempts, sessions])
   const progress = useMemo(() => computeGoalProgress(settings, skillStates, sessions, attempts, essays.length), [settings, skillStates, sessions, attempts, essays.length])
+  const measurement = useMemo(() => {
+    const sectionA = attempts.filter((attempt) => attempt.section === 'section-a')
+    const sourceCounts = { 'local-original': 0, 'ai-generated': 0 }
+    let poeTotal = 0
+    let poeCorrect = 0
+    const confidence = { tagged: 0, correct: 0, untagged: 0 }
+    let timed = 0
+    let onTime = 0
+    let totalSeconds = 0
+
+    for (const attempt of sectionA) {
+      const source = attempt.questionSnapshot?.source ?? (attempt.id.startsWith('ai-') ? 'ai-generated' : 'local-original')
+      sourceCounts[source] += 1
+      if ((attempt.eliminatedChoices?.length ?? 0) > 0) {
+        poeTotal += 1
+        poeCorrect += Number(attempt.correct)
+      }
+      if (attempt.confidence) {
+        confidence.tagged += 1
+        confidence.correct += Number(attempt.correct)
+      } else confidence.untagged += 1
+      if (attempt.elapsedMs > 0) {
+        timed += 1
+        totalSeconds += attempt.elapsedMs / 1000
+        onTime += Number(attempt.elapsedMs <= (attempt.questionSnapshot?.estimatedSeconds ?? 80) * 1250)
+      }
+    }
+    return {
+      total: sectionA.length,
+      sourceCounts,
+      poeAccuracy: poeTotal ? Math.round(poeCorrect / poeTotal * 100) : null,
+      poeUse: poeTotal,
+      confidenceAccuracy: confidence.tagged ? Math.round(confidence.correct / confidence.tagged * 100) : null,
+      confidence,
+      averageSeconds: timed ? Math.round(totalSeconds / timed) : null,
+      onTimeRate: timed ? Math.round(onTime / timed * 100) : null,
+    }
+  }, [attempts])
 
   const build = async () => {
     setBuilding(true)
@@ -110,6 +148,15 @@ export function InsightsPage() {
       </section>
 
       <div className="insights-columns">
+        <section className="plain-section measurement-section">
+          <div className="section-heading"><div><h2>Method signals</h2><p>Whether your reading method, confidence, and pace are helping.</p></div></div>
+          <div className="method-grid">
+            <span><small>Process of elimination</small><strong>{measurement.poeUse}</strong><em>{measurement.poeAccuracy === null ? 'not enough evidence' : `${measurement.poeAccuracy}% accurate`}</em></span>
+            <span><small>Tagged confidence</small><strong>{measurement.confidence.tagged}</strong><em>{measurement.confidenceAccuracy === null ? 'optional five-point tag' : `${measurement.confidenceAccuracy}% accurate`}</em></span>
+            <span><small>Average decision</small><strong>{measurement.averageSeconds === null ? '—' : `${measurement.averageSeconds}s`}</strong><em>{measurement.onTimeRate === null ? 'timing not recorded' : `${measurement.onTimeRate}% within budget`}</em></span>
+            <span><small>Source mix</small><strong>{measurement.sourceCounts['local-original']}/{measurement.total}</strong><em>{measurement.sourceCounts['ai-generated']} AI-generated · rest original</em></span>
+          </div>
+        </section>
         <section className="plain-section">
           <div className="section-heading"><div><h2>By question family</h2><p>Where the marks are actually going.</p></div></div>
           <div className="domain-bars">

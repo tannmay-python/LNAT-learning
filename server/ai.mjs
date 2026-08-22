@@ -7,6 +7,8 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const agyBinary = process.env.ANTIGRAVITY_CLI || resolve(homedir(), '.local/bin/agy')
 const antigravityModel = process.env.ANTIGRAVITY_MODEL || 'gemini-3.7-flash-high'
+const claudeCodeBinary = process.env.CLAUDE_CODE_CLI || 'claude'
+const claudeCodeModel = process.env.CLAUDE_CODE_MODEL || 'sonnet'
 const promptVersion = 'lnat-intelligence-v1'
 
 const CHOICE_IDS = ['a', 'b', 'c', 'd', 'e']
@@ -39,6 +41,13 @@ const difficultyBrief = {
   4: 'the near-miss option is defensible until one precise feature of the passage rules it out; scope, attribution, or argumentative role decides it',
   5: 'three options survive a careful first pass, and the decision turns on a single qualification, a change of voice, or the exact role a sentence plays',
 }
+
+const officialGenerationBrief = `PUBLIC LNAT SPECIFICATION (2026-08-22)
+- Section A has 42 questions on 12 argumentative passages, with 3 or 4 questions per passage, in 95 minutes.
+- Each question has five options and one mark. There is no penalty for a wrong answer.
+- Official preparation guidance says near-miss options are deliberate and advises eliminating options known to be wrong before guessing.
+- The published essay guidance is 500-600 words in 40 minutes, with 750 as the recommended maximum. Section B is unmarked.
+- The Consortium reports a score out of 42 and publishes no conversion, percentile, or admissions threshold. Never imply another scale.`
 
 let serialWork = Promise.resolve()
 let queuedWork = 0
@@ -94,6 +103,14 @@ export function getAiStatus() {
   if (configured === 'claude' && process.env.ANTHROPIC_API_KEY) {
     return decorate({ available: true, provider: 'claude', access: 'Anthropic API key', model: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-5-20250929' })
   }
+  if (configured === 'claude-code') {
+    return decorate({
+      available: true,
+      provider: 'claude-code',
+      access: 'Claude Code via your local subscription session',
+      model: claudeCodeModel,
+    })
+  }
   return decorate({
     available: false,
     provider: 'none',
@@ -146,10 +163,29 @@ async function callAntigravity(system, prompt, schema) {
   return typeof structured === 'string' ? JSON.parse(structured) : structured
 }
 
+async function callClaudeCode(system, prompt, schema) {
+  const { stdout } = await execFileAsync(claudeCodeBinary, [
+    '--print',
+    `${system}\n\n${prompt}`,
+    '--output-format', 'json',
+    '--json-schema', JSON.stringify(schema),
+    '--model', claudeCodeModel,
+    '--effort', 'high',
+    '--tools', '',
+    '--disable-slash-commands',
+    '--no-session-persistence',
+  ], { cwd: process.cwd(), timeout: 240_000, maxBuffer: 16 * 1024 * 1024, env: { ...process.env, NO_COLOR: '1' } })
+  const envelope = JSON.parse(stdout.trim())
+  if (envelope.is_error) throw new Error(envelope.result || 'Claude Code could not complete the request.')
+  if (!envelope.result) throw new Error('Claude Code returned no result.')
+  return typeof envelope.result === 'string' ? extractJson(envelope.result) : envelope.result
+}
+
 async function callModel(system, prompt, schema) {
   const status = getAiStatus()
   if (!status.available) throw new Error(status.lastError || 'No analyst is configured.')
   if (status.provider === 'antigravity') return callAntigravity(system, prompt, schema)
+  if (status.provider === 'claude-code') return callClaudeCode(system, prompt, schema)
   if (status.provider === 'gemini') {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${status.model}:generateContent?key=${process.env.GEMINI_API_KEY}`, {
       method: 'POST',
@@ -280,8 +316,10 @@ const writerSystem = `You write original practice material for LNATLAS, an indep
 
 Write a passage and its question set in the style and at the level of the LNAT's Section A, using only the publicly described format as a specification. Never reproduce, closely paraphrase, name, or imply any past or live LNAT passage, question, or answer key. Never state that anything is official.
 
+${officialGenerationBrief}
+
 THE PASSAGE
-- 350 to 520 words, argumentative rather than expository. It should take a position and defend it, or set two positions against each other.
+- 380 to 680 words (target around the published practice median of 508), argumentative rather than expository. It should take a position and defend it, or set two positions against each other.
 - Written for an intelligent general reader. No specialist knowledge may be required: everything needed to answer must be on the page.
 - Adult, literate, slightly formal prose. Use concession ("Admittedly…", "The complaint is not frivolous"), qualification, and at least one moment of irony, comparison, or marked emphasis, because those generate the rhetoric questions.
 - Where the register is multi-extract, write two or three short pieces by named, invented commentators who partly agree and partly disagree. Attribution must be recoverable.
@@ -413,7 +451,7 @@ ${JSON.stringify(references.slice(-8).map((passage) => ({ title: passage.title, 
     const fullText = isMultiExtract ? extracts.map((extract) => extract.body).join('\n\n') : body
     const wordCount = words(fullText).length
 
-    if (wordCount < 300 || wordCount > 620) throw new Error(`The generated passage was ${wordCount} words, outside the 300–620 band.`)
+    if (wordCount < 380 || wordCount > 680) throw new Error(`The generated passage was ${wordCount} words; fresh sets must match the measured 380–680 LNAT band.`)
     if (!isMultiExtract && paragraphs.length < 4) throw new Error('The generated passage had too few paragraphs.')
     if (references.some((passage) => shingleOverlap(fullText, String(passage.body || (passage.extracts ?? []).map((e) => e.body).join(' '))) >= 0.35)) {
       throw new Error('The generated passage was too close to an existing local passage.')
@@ -451,8 +489,8 @@ ${JSON.stringify(references.slice(-8).map((passage) => ({ title: passage.title, 
       && item.review?.difficultyFit === 'representative'
       && item.review?.distractorQuality === 'credible')
 
-    if (accepted.length < 3) {
-      throw new Error(`Only ${accepted.length} of ${candidates.length} questions survived an independent solve, which is fewer than a passage set needs.`)
+    if (accepted.length !== candidates.length) {
+      throw new Error(`Only ${accepted.length} of ${candidates.length} questions survived the independent solve; the complete set was discarded rather than weakened.`)
     }
 
     const reviewedAt = new Date().toISOString()

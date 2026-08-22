@@ -4,13 +4,14 @@ import { ArrowRight, BookOpen, Brain, CheckCircle, Clock, Repeat, Sparkle, XCirc
 import { curriculum, domains, skillById } from '../data/curriculum'
 import { passages as authoredPassages } from '../data/passages'
 import { questionBank } from '../data/questionBank'
+import { expansionPassages, expansionQuestions } from '../data/bankExpansion'
 import { paperTargetDifficulty, planQuestionBlueprint, rankPassages } from '../engine/adaptive'
 import { isCorrectResponse, sanitizePassage } from '../engine/questions'
 import { DifficultyScalePicker, DifficultyStars, difficultyLabel } from '../components/DifficultyStars'
 import { PassagePane } from '../components/PassagePane'
 import { QuestionCard } from '../components/QuestionCard'
 import { useAppState } from '../state/AppState'
-import type { Attempt, Confidence, Difficulty, Passage, Question, SessionRecord } from '../types'
+import type { Attempt, ChoiceId, Confidence, Difficulty, Passage, Question, SessionRecord } from '../types'
 
 type QuestionSource = 'fresh' | 'authored'
 
@@ -49,6 +50,7 @@ export function PracticePage() {
   const [currentAttemptId, setCurrentAttemptId] = useState<string>()
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [highlights, setHighlights] = useState<Record<string, string[]>>({})
+  const [eliminated, setEliminated] = useState<Record<string, ChoiceId[]>>({})
 
   const sessionId = useRef(crypto.randomUUID())
   const sessionStarted = useRef(new Date().toISOString())
@@ -57,8 +59,8 @@ export function PracticePage() {
   const passageReadLogged = useRef<Set<string>>(new Set())
 
   const pool = useMemo(() => {
-    const allPassages = [...authoredPassages, ...generatedPassages].map(sanitizePassage)
-    const allQuestions = [...questionBank, ...generatedQuestions]
+    const allPassages = [...authoredPassages, ...expansionPassages, ...generatedPassages].map(sanitizePassage)
+    const allQuestions = [...questionBank, ...expansionQuestions, ...generatedQuestions]
     const byPassage = new Map<string, Question[]>()
     for (const question of allQuestions) {
       if (!byPassage.has(question.passageId)) byPassage.set(question.passageId, [])
@@ -148,6 +150,7 @@ export function PracticePage() {
     setConfidence(undefined)
     setSubmitted(false)
     setCurrentAttemptId(undefined)
+    if (current) setEliminated((items) => ({ ...items, [current.id]: [] }))
     setElapsedSeconds(0)
     questionStarted.current = Date.now()
   }
@@ -192,6 +195,7 @@ export function PracticePage() {
       correct,
       confidence,
       elapsedMs: Date.now() - questionStarted.current,
+      eliminatedChoices: eliminated[current.id] ?? [],
       ...(firstOfPassage ? { passageReadMs: Math.max(0, questionStarted.current - passageOpened.current) } : {}),
       usedHint: false,
       mistakeType: correct ? undefined : current.whyWrong?.[response as 'a'] ?? 'Reading or reasoning error',
@@ -410,6 +414,8 @@ export function PracticePage() {
             analysis={analysis}
             aiAvailable={aiStatus.available}
             onAnalyzeRequest={currentAttemptId ? (justification) => analyzeAttempt(currentAttemptId, justification).then(() => undefined) : undefined}
+            eliminated={eliminated[current.id] ?? []}
+            onEliminated={(value) => setEliminated((items) => ({ ...items, [current.id]: value }))}
           />
           <footer className="question-actions">
             {!submitted ? (

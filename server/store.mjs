@@ -87,6 +87,22 @@ const defaultSkillState = (skillId) => ({
 const expectedSuccess = (theta, difficulty) => 1 / (1 + Math.exp(-(theta - (difficulty - 3) * 0.72)))
 
 /**
+ * Older records and retry storms can produce the same answer under a fresh UUID.
+ * The semantic identity is the sitting plus the question; keep the latest event.
+ */
+export function canonicalizeAttempts(attempts) {
+  const unique = new Map()
+  for (const attempt of attempts) {
+    const key = attempt.sessionId && attempt.questionId
+      ? `${attempt.sessionId}:${attempt.questionId}`
+      : attempt.id
+    const previous = unique.get(key)
+    if (!previous || String(attempt.createdAt ?? '') >= String(previous.createdAt ?? '')) unique.set(key, attempt)
+  }
+  return [...unique.values()].sort((left, right) => String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? '')))
+}
+
+/**
  * Mirrors `src/engine/adaptive.ts`. The server owns the authoritative skill
  * state so that a browser refresh, a second tab, or a crashed mock can never
  * lose or double-count evidence.
@@ -149,6 +165,17 @@ export async function initializeStore() {
   ])
 }
 
+export function rebuildSkillStates(attempts) {
+  return canonicalizeAttempts(attempts).reduce((states, attempt) => {
+    if (!attempt?.skillId || attempt.section !== 'section-a') return states
+    const index = states.findIndex((state) => state.skillId === attempt.skillId)
+    const next = updateSkillState(index >= 0 ? states[index] : undefined, attempt)
+    if (index >= 0) states[index] = next
+    else states.push(next)
+    return states
+  }, [])
+}
+
 export async function getState(aiStatus) {
   const [settings, skillStates, learnerModel, attempts, sessions, essays, analyses, generatedPassages, generatedQuestions, reports, activeMock, mockAssessments] =
     await Promise.all([
@@ -165,11 +192,13 @@ export async function getState(aiStatus) {
       readJson(paths.activeMock, null),
       readJsonl(paths.mockAssessments),
     ])
+  const canonicalAttempts = canonicalizeAttempts(attempts)
+  const rebuiltSkillStates = rebuildSkillStates(canonicalAttempts)
   return {
     settings: { ...defaultSettings, ...settings },
-    skillStates,
+    skillStates: rebuiltSkillStates,
     learnerModel,
-    attempts: attempts.toReversed(),
+    attempts: canonicalAttempts.toReversed(),
     sessions: sessions.toReversed(),
     essays: essays.toReversed(),
     analyses: analyses.toReversed(),
@@ -186,7 +215,9 @@ export async function getState(aiStatus) {
 /** Answers are written before anything else looks at them, and never twice. */
 export async function recordAttempt(attempt, question, passage) {
   const existing = await readJsonl(paths.attempts)
-  if (existing.some((item) => item.id === attempt.id)) {
+  if (existing.some((item) =>
+    item.id === attempt.id ||
+    (item.sessionId === attempt.sessionId && item.questionId === attempt.questionId))) {
     return { saved: false, skillStates: await readJson(paths.skills, []) }
   }
   await appendJsonl(paths.attempts, {
@@ -204,11 +235,20 @@ export async function recordAttempt(attempt, question, passage) {
 }
 
 export async function recordAttempts(records) {
-  const results = []
-  for (const record of records) {
-    results.push(await recordAttempt(record.attempt, record.question, record.passage))
-  }
-  return { saved: results.filter((result) => result.saved).length }
+  const existing = await readJsonl(paths.attempts)
+  const knownIds = new Set(existing.map((item) => item.id))
+  const knownAnswers = new Set(existing.map((item) => `${item.sessionId}:${item.questionId}`))
+  const events = records.filter((record) => {
+    const attempt = record.attempt
+    return attempt && !knownIds.has(attempt.id) && !knownAnswers.has(`${attempt.sessionId}:${attempt.questionId}`)
+  }).map(({ attempt, question, passage }) => ({
+    ...attempt,
+    questionSnapshot: question ? { ...question } : undefined,
+    passageSnapshot: passage ? { ...passage } : undefined,
+  }))
+  for (const event of events) await appendJsonl(paths.attempts, event)
+  if (events.length) await atomicJson(paths.skills, rebuildSkillStates([...existing, ...events]))
+  return { saved: events.length }
 }
 
 export async function saveSession(session) {

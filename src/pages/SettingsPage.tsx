@@ -96,9 +96,10 @@ export function SettingsPage() {
         <div className="privacy-note">
           <ShieldCheck size={17} />
           <p>
-            Set <code>AI_PROVIDER</code> in <code>.env.local</code> to <code>antigravity</code>, <code>gemini</code>, or{' '}
-            <code>claude</code>. Antigravity uses your existing local Google OAuth session through the <code>agy</code>{' '}
-            binary, so no key is stored here at all. The analyst can write fresh passages, review a justification you
+            Set <code>AI_PROVIDER</code> in <code>.env.local</code> to <code>claude-code</code>, <code>antigravity</code>,{' '}
+            <code>gemini</code>, or <code>claude</code>. Claude Code uses your signed-in local subscription session through
+            the <code>claude</code> CLI; Antigravity uses your local Google session through <code>agy</code>, so no key is
+            stored here for either. The analyst can write fresh passages, review a justification you
             submit, report on a completed set, and give formative essay feedback. Raw evidence is always written to disk
             before any of that runs, and a failed analysis never loses an answer.
           </p>

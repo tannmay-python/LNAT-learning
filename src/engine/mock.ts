@@ -1,4 +1,5 @@
 import { essayPrompts } from '../data/essayPrompts'
+import { expansionPassages, expansionQuestions } from '../data/bankExpansion'
 import { passages as authoredPassages } from '../data/passages'
 import { questionBank } from '../data/questionBank'
 import type { ActiveMockCheckpoint, EssayPrompt, Passage, Question } from '../types'
@@ -52,20 +53,39 @@ export function buildForm(
   const usable = pool.filter((passage) => (byPassage.get(passage.id)?.length ?? 0) >= 3)
   const ordered = mix(usable, seed)
 
-  const chosen: Passage[] = []
-  const chosenQuestions: Question[] = []
-  for (const passage of ordered) {
-    if (chosen.length >= LNAT_SPEC.sectionA.passages) break
-    const set = (byPassage.get(passage.id) ?? []).slice(0, 4)
-    if (chosenQuestions.length + set.length > LNAT_SPEC.sectionA.questions) continue
-    chosen.push(passage)
-    chosenQuestions.push(...set)
+  const candidates = ordered.map((passage) => ({
+    passage,
+    questions: (byPassage.get(passage.id) ?? []).slice(0, 4),
+  })).filter((entry) => entry.questions.length >= 3)
+
+  // Passage sets are three or four items long, so a greedy pass can strand the
+  // form at 40 or 41. Exact-cover selection keeps the published 42-question
+  // blueprint while still honouring the seeded passage order where possible.
+  type Selection = Array<typeof candidates[number]>
+  const selections = new Map<number, Selection>()
+  selections.set(0, [])
+  for (const entry of candidates) {
+    for (let count = LNAT_SPEC.sectionA.questions - entry.questions.length; count >= 0; count -= 1) {
+      const previous = selections.get(count)
+      if (!previous || previous.some((item) => item.passage.id === entry.passage.id)) continue
+      if (selections.has(count + entry.questions.length)) continue
+      selections.set(count + entry.questions.length, [...previous, entry])
+    }
   }
-  return { passages: chosen, questions: chosenQuestions }
+  const selected = selections.get(LNAT_SPEC.sectionA.questions)
+  if (!selected) throw new Error('The bank cannot assemble a complete 42-question Section A form.')
+  return {
+    passages: selected.map((entry) => entry.passage),
+    questions: selected.flatMap((entry) => entry.questions),
+  }
 }
 
 export function createMock(seed = Date.now()): LnatMock {
-  const { passages, questions } = buildForm(authoredPassages, questionBank, seed)
+  const { passages, questions } = buildForm(
+    [...authoredPassages, ...expansionPassages],
+    [...questionBank, ...expansionQuestions],
+    seed,
+  )
   return {
     id: crypto.randomUUID(),
     passages,

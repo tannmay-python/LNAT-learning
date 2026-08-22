@@ -155,6 +155,8 @@ export interface Attempt {
   /** Time spent on the passage before the first question of its set, when recorded. */
   passageReadMs?: number
   usedHint: boolean
+  /** Choices the learner crossed out with process of elimination, when tracked. */
+  eliminatedChoices?: ChoiceId[]
   mistakeType?: string
   createdAt: string
   questionSnapshot?: Question
@@ -194,6 +196,29 @@ export interface SessionRecord {
   questionDifficulties?: Record<string, Difficulty>
   /** Set when the sitting included a Section B response. */
   essayId?: string
+  scoreReport?: MockScoreReport
+}
+
+export interface MockTrainingAction {
+  skillId?: string
+  title: string
+  reason: string
+  action: string
+  evidence: string
+}
+
+export interface MockScoreReport {
+  correct: number
+  total: number
+  band: { label: string; note: string }
+  boundary: string
+  averageSeconds: number
+  overTimeQuestions: number
+  unanswered: number
+  flaggedUnanswered: number
+  poeUsedQuestions: number
+  poeAccurateRate: number | null
+  trainingPlan: MockTrainingAction[]
 }
 
 export interface EssayPrompt {
@@ -439,6 +464,8 @@ export interface ActiveMockCheckpoint {
   startedAt: string
   elapsedByQuestion: Record<string, number>
   checkpointedAt: string
+  /** Built when Section A is submitted; retained so a paused sitting keeps its diagnosis. */
+  scoreReport?: MockScoreReport
 }
 
 export interface LearningStateSnapshot {

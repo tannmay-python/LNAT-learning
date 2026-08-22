@@ -1,4 +1,5 @@
 import type { Attempt, Confidence, Difficulty, Passage, Question, QuestionBlueprint, SkillDirective, SkillState } from '../types'
+import { bandForScore, scoreBands } from './officialReference'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -277,13 +278,4 @@ export function overallTheta(states: SkillState[], skillIds: string[]) {
  * a recent cycle; the rest are the ranges successful applicants have tended to
  * present. None of this is an official conversion or a prediction of an offer.
  */
-export const scoreBands = [
-  { from: 0, to: 17, label: 'Below the cohort mean', note: 'Most competitive courses will look elsewhere first.' },
-  { from: 18, to: 22, label: 'Around the cohort mean', note: 'Roughly where the average candidate sits.' },
-  { from: 23, to: 26, label: 'Above the mean', note: 'Competitive for several consortium universities.' },
-  { from: 27, to: 30, label: 'Strong', note: 'In the range successful applicants to the most selective courses have presented.' },
-  { from: 31, to: 42, label: 'Exceptional', note: 'Above the reported averages of offer-holders anywhere in the consortium.' },
-] as const
-
-export const bandForScore = (score: number) =>
-  scoreBands.find((band) => score >= band.from && score <= band.to) ?? scoreBands[0]
+export { bandForScore, scoreBands }

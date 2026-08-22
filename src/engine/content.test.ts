@@ -1,12 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { curriculum, domains, sectionASkillIds, skillById } from '../data/curriculum'
 import { passages, passageParagraphs } from '../data/passages'
-import { questionBank, questionsForPassage } from '../data/questionBank'
+import { questionBank } from '../data/questionBank'
+import { expansionPassages, expansionQuestions } from '../data/bankExpansion'
 import { essayPrompts } from '../data/essayPrompts'
 import { CHOICE_IDS, questionFault } from './questions'
 import { LNAT_SPEC } from './mock'
 
 describe('the authored bank can supply a complete Section A form', () => {
+  it('retains the original full-form bank', () => {
+    expect(questionBank).toHaveLength(LNAT_SPEC.sectionA.questions)
+  })
+
+  it('expands the practice pool without breaking passage-led structure', () => {
+    const allPassages = [...passages, ...expansionPassages]
+    const allQuestions = [...questionBank, ...expansionQuestions]
+    expect(allQuestions.length).toBeGreaterThanOrEqual(62)
+    expect(new Set(allQuestions.map((question) => question.id)).size).toBe(allQuestions.length)
+    expect(new Set(allPassages.map((passage) => passage.id)).size).toBe(allPassages.length)
+  })
+
   it('has at least twelve passages', () => {
     expect(passages.length).toBeGreaterThanOrEqual(LNAT_SPEC.sectionA.passages)
   })
@@ -16,8 +29,12 @@ describe('the authored bank can supply a complete Section A form', () => {
   })
 
   it('gives every passage three or four questions, as the real form does', () => {
-    for (const passage of passages) {
-      const count = questionsForPassage(passage.id).length
+    const byPassage = new Map<string, number>()
+    for (const question of [...questionBank, ...expansionQuestions]) {
+      byPassage.set(question.passageId, (byPassage.get(question.passageId) ?? 0) + 1)
+    }
+    for (const passage of [...passages, ...expansionPassages]) {
+      const count = byPassage.get(passage.id) ?? 0
       expect(count, `${passage.id} has ${count} questions`).toBeGreaterThanOrEqual(3)
       expect(count, `${passage.id} has ${count} questions`).toBeLessThanOrEqual(4)
     }
@@ -30,7 +47,7 @@ describe('the authored bank can supply a complete Section A form', () => {
 
 describe('every passage is readable and self-contained', () => {
   it('sits in a plausible LNAT length band', () => {
-    for (const passage of passages) {
+    for (const passage of [...passages, ...expansionPassages]) {
       expect(passage.wordCount, `${passage.id} is ${passage.wordCount} words`).toBeGreaterThanOrEqual(280)
       expect(passage.wordCount, `${passage.id} is ${passage.wordCount} words`).toBeLessThanOrEqual(700)
     }
@@ -44,7 +61,7 @@ describe('every passage is readable and self-contained', () => {
   })
 
   it('attributes every extract on a multi-extract passage', () => {
-    for (const passage of passages.filter((item) => item.register === 'multi-extract')) {
+    for (const passage of [...passages, ...expansionPassages].filter((item) => item.register === 'multi-extract')) {
       expect(passage.extracts?.length, passage.id).toBeGreaterThanOrEqual(2)
       for (const extract of passage.extracts ?? []) {
         expect(extract.attribution.trim().length).toBeGreaterThan(0)
@@ -53,33 +70,33 @@ describe('every passage is readable and self-contained', () => {
     }
   })
 
-  it('uses unique identifiers', () => {
-    expect(new Set(passages.map((passage) => passage.id)).size).toBe(passages.length)
+it('uses unique identifiers', () => {
+    expect(new Set([...passages, ...expansionPassages].map((passage) => passage.id)).size).toBe(passages.length + expansionPassages.length)
   })
 })
 
 describe('every question is structurally sound', () => {
   it('passes structural validation', () => {
-    for (const question of questionBank) {
+    for (const question of [...questionBank, ...expansionQuestions]) {
       expect(questionFault(question), question.id).toBeNull()
     }
   })
 
   it('uses lowercase (a) to (e) labels, as the LNAT does', () => {
-    for (const question of questionBank) {
+    for (const question of [...questionBank, ...expansionQuestions]) {
       expect(question.choices.map((choice) => choice.id), question.id).toEqual(CHOICE_IDS)
     }
   })
 
   it('attaches to a passage that exists', () => {
-    const ids = new Set(passages.map((passage) => passage.id))
-    for (const question of questionBank) {
+    const ids = new Set([...passages, ...expansionPassages].map((passage) => passage.id))
+    for (const question of [...questionBank, ...expansionQuestions]) {
       expect(ids.has(question.passageId), `${question.id} -> ${question.passageId}`).toBe(true)
     }
   })
 
   it('names a skill that exists in the curriculum, and never an essay skill', () => {
-    for (const question of questionBank) {
+    for (const question of [...questionBank, ...expansionQuestions]) {
       const skill = skillById.get(question.skillId)
       expect(skill, question.id).toBeDefined()
       expect(skill?.section, question.id).toBe('section-a')
@@ -88,7 +105,7 @@ describe('every question is structurally sound', () => {
   })
 
   it('diagnoses every wrong option and never the right one', () => {
-    for (const question of questionBank) {
+    for (const question of [...questionBank, ...expansionQuestions]) {
       const wrong = CHOICE_IDS.filter((id) => id !== question.answer)
       for (const id of wrong) {
         expect(question.whyWrong?.[id], `${question.id} option (${id})`).toBeTruthy()
@@ -98,20 +115,21 @@ describe('every question is structurally sound', () => {
   })
 
   it('teaches a transferable concept alongside the explanation', () => {
-    for (const question of questionBank) {
+    for (const question of [...questionBank, ...expansionQuestions]) {
       expect(question.concept.trim().split(/\s+/).length, question.id).toBeGreaterThanOrEqual(8)
       expect(question.explanation.trim().split(/\s+/).length, question.id).toBeGreaterThanOrEqual(15)
     }
   })
 
   it('uses unique identifiers', () => {
-    expect(new Set(questionBank.map((question) => question.id)).size).toBe(questionBank.length)
+    const allQuestions = [...questionBank, ...expansionQuestions]
+    expect(new Set(allQuestions.map((question) => question.id)).size).toBe(allQuestions.length)
   })
 })
 
 describe('the bank exercises the whole Section A skill map', () => {
   it('covers every Section A skill at least once', () => {
-    const used = new Set(questionBank.map((question) => question.skillId))
+    const used = new Set([...questionBank, ...expansionQuestions].map((question) => question.skillId))
     for (const skillId of sectionASkillIds) {
       expect(used.has(skillId), `${skillId} is never tested`).toBe(true)
     }
@@ -124,7 +142,7 @@ describe('the bank exercises the whole Section A skill map', () => {
 
   it('does not let one skill dominate the form', () => {
     const counts = new Map<string, number>()
-    for (const question of questionBank) counts.set(question.skillId, (counts.get(question.skillId) ?? 0) + 1)
+    for (const question of [...questionBank, ...expansionQuestions]) counts.set(question.skillId, (counts.get(question.skillId) ?? 0) + 1)
     for (const [skillId, count] of counts) {
       expect(count, `${skillId} appears ${count} times`).toBeLessThanOrEqual(6)
     }

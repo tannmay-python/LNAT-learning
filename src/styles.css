@@ -583,6 +583,18 @@ input[type="range"] { min-height: 22px; padding: 0; border: 0; accent-color: var
 .mock-intro p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .score-band { color: var(--text) !important; }
 .score-band strong { color: var(--accent); }
+.mock-training-report { display: grid; gap: 16px; max-width: 640px; margin: 0 auto; text-align: left; }
+.report-metric-grid, .method-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.report-metric-grid span, .method-grid span { display: grid; gap: 3px; padding: 12px 13px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.report-metric-grid small, .method-grid small { color: var(--faint); font-size: 9px; letter-spacing: .06em; text-transform: uppercase; }
+.report-metric-grid strong, .method-grid strong { font-size: 19px; letter-spacing: -.03em; }
+.report-metric-grid em, .method-grid em { color: var(--muted); font-size: 10.5px; font-style: normal; line-height: 1.45; }
+.training-plan, .history-training-plan ol { display: grid; gap: 10px; margin: 0; padding-left: 20px; }
+.training-plan li strong, .history-training-plan b { display: inline; margin-right: 6px; }
+.training-plan li span { display: block; color: var(--faint); font-size: 10px; }
+.training-plan p, .history-training-plan li { margin: 2px 0 0; color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.history-training-plan { display: grid; gap: 8px; width: 100%; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.measurement-section { grid-column: 1 / -1; }
 .mock-rules { margin: 4px 0 8px; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .mock-bar { position: sticky; top: 0; z-index: 20; min-height: 52px; padding: 0 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(12px); }
 .mock-label { color: var(--muted); font-size: 11px; font-weight: 700; }

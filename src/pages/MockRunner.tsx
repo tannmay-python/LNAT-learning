@@ -6,7 +6,7 @@ import { PassagePane } from '../components/PassagePane'
 import { QuestionCard } from '../components/QuestionCard'
 import { createCheckpoint, createMock, LNAT_SPEC, passageGroups, questionLocation } from '../engine/mock'
 import { isCorrectResponse, rawScore, wordCount } from '../engine/questions'
-import { bandForScore } from '../engine/adaptive'
+import { buildMockScoreReport } from '../engine/officialReference'
 import { useAppState } from '../state/AppState'
 import type { ActiveMockCheckpoint, Attempt, ChoiceId, EssayRecord, MockStage, SessionRecord } from '../types'
 
@@ -159,6 +159,7 @@ export function MockRunner() {
             correct: isCorrectResponse(question, response),
             elapsedMs: Math.round(current.elapsedByQuestion[question.id] ?? 0),
             usedHint: false,
+            eliminatedChoices: current.eliminated[question.id] ?? [],
             mistakeType: isCorrectResponse(question, response)
               ? undefined
               : response ? question.whyWrong?.[response as ChoiceId] ?? 'Reading or reasoning error' : 'Left unanswered',
@@ -184,6 +185,13 @@ export function MockRunner() {
         sectionAScore: score.correct,
         questionSources: Object.fromEntries(current.questions.map((question) => [question.id, question.source])),
         questionDifficulties: Object.fromEntries(current.questions.map((question) => [question.id, question.difficulty])),
+        scoreReport: buildMockScoreReport({
+          questions: current.questions,
+          answers: current.answers,
+          flags: current.flags,
+          eliminated: current.eliminated,
+          elapsedByQuestion: current.elapsedByQuestion,
+        }),
       }
       await saveSession(session)
       setResult({ ...score, sessionId: current.id })
@@ -420,13 +428,27 @@ export function MockRunner() {
 
   // ------------------------------------------------------------------ break
   if (mock.stage === 'break') {
-    const band = result ? bandForScore(result.correct) : null
+    const scoreReport = mock.scoreReport
     return (
       <div className="mock-frame intro">
         <section className="mock-intro">
           <p className="eyebrow">Section A complete</p>
           <h1>{result ? `${result.correct} / ${result.total}` : 'Saved'}</h1>
-          {band && <p className="score-band"><strong>{band.label}.</strong> {band.note}</p>}
+          {scoreReport && (
+            <div className="mock-training-report">
+              <p className="score-band"><strong>{scoreReport.band.label}.</strong> {scoreReport.band.note}</p>
+              <div className="report-metric-grid">
+                <span><small>Average decision</small><strong>{scoreReport.averageSeconds}s</strong></span>
+                <span><small>Blanks</small><strong>{scoreReport.unanswered}</strong></span>
+                <span><small>PoE used</small><strong>{scoreReport.poeUsedQuestions}/{result?.total ?? 42}</strong></span>
+              </div>
+              <ol className="training-plan">
+                {scoreReport.trainingPlan.map((item) => (
+                  <li key={item.title}><strong>{item.title}</strong><span>{item.reason}</span><p>{item.action}</p></li>
+                ))}
+              </ol>
+            </div>
+          )}
           <p>
             That is a raw mark and nothing more. The LNAT publishes no conversion beyond it, so this app will not invent
             a scaled score, a percentile, or a prediction about an offer.
@@ -501,13 +523,23 @@ export function MockRunner() {
   // --------------------------------------------------------------- complete
   const essay = savedEssayId ? essays.find((item) => item.id === savedEssayId) : undefined
   const assessment = result ? mockAssessments.find((item) => item.sessionId === result.sessionId) : undefined
+  const scoreReport = mock.scoreReport
   return (
     <div className="mock-frame intro">
       <section className="mock-intro">
         <CheckCircle size={30} weight="fill" />
         <p className="eyebrow">Sitting complete</p>
         <h1>{result ? `${result.correct} / 42` : 'Saved'}</h1>
-        {result && <p className="score-band"><strong>{bandForScore(result.correct).label}.</strong> {bandForScore(result.correct).note}</p>}
+        {result && scoreReport && (
+          <>
+            <p className="score-band"><strong>{scoreReport.band.label}.</strong> {scoreReport.band.note}</p>
+            <div className="training-plan">
+              {scoreReport.trainingPlan.map((item) => (
+                <article key={item.title}><strong>{item.title}</strong><p>{item.action}</p></article>
+              ))}
+            </div>
+          </>
+        )}
         {assessment && (
           <p className="mock-assessment-rationale">
             <strong>Expected beforehand: {assessment.expectedScore}.</strong> {assessment.rationale}
