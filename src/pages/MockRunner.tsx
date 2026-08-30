@@ -1,17 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
-import { ArrowLeft, ArrowRight, CheckCircle, Clock, Flag, List, Warning, X } from '@phosphor-icons/react'
+import { ArrowLeft, ArrowRight, CheckCircle, Clock, Flag, List, Sparkle, Warning, X } from '@phosphor-icons/react'
 import { EssayComposer } from '../components/EssayComposer'
 import { PassagePane } from '../components/PassagePane'
 import { QuestionCard } from '../components/QuestionCard'
-import { createCheckpoint, createMock, LNAT_SPEC, passageGroups, questionLocation } from '../engine/mock'
+import { createCheckpoint, createMock, LNAT_SPEC, mockPassageBlueprints, passageGroups, questionLocation } from '../engine/mock'
 import { isCorrectResponse, rawScore, wordCount } from '../engine/questions'
 import { buildMockScoreReport } from '../engine/officialReference'
 import { useAppState } from '../state/AppState'
-import type { ActiveMockCheckpoint, Attempt, ChoiceId, EssayRecord, MockStage, SessionRecord } from '../types'
+import type {
+  ActiveMockCheckpoint, Attempt, ChoiceId, EssayRecord,
+  MockStage, Passage, Question, SessionRecord,
+} from '../types'
 
 const formatTime = (seconds: number) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 const runsClock = (stage: MockStage) => stage === 'section-a' || stage === 'review' || stage === 'essay'
+
+/**
+ * How much of the form is written before the candidate may begin. The rest is
+ * written in the background while they read, and swapped in ahead of them —
+ * the same shape as SATLAS preparing Math module 1 during Reading and Writing.
+ *
+ * Two is deliberate. A passage set costs two model calls (write, then an
+ * independent solve), which runs to a few minutes; four would leave a candidate
+ * staring at a progress bar for ten. Two passages is roughly fifteen minutes of
+ * the sitting against a writer that produces one every three or so, so the
+ * background stays comfortably ahead of the reader from the first minute.
+ */
+const FOREGROUND_PASSAGES = 2
 
 /** A resumed sitting must not gain the time it spent closed. */
 const resumeClock = (mock: ActiveMockCheckpoint): ActiveMockCheckpoint => {
@@ -23,8 +39,13 @@ const resumeClock = (mock: ActiveMockCheckpoint): ActiveMockCheckpoint => {
 
 export function MockRunner() {
   const [, navigate] = useLocation()
-  const { loading, activeMock, saveActiveMock, recordAttempts, saveSession, saveEssay, requestEssayFeedback, aiStatus, essays, mockAssessments } = useAppState()
+  const {
+    loading, activeMock, saveActiveMock, recordAttempts, saveSession, saveEssay,
+    requestEssayFeedback, preparePassageSet, aiStatus, essays, mockAssessments,
+  } = useAppState()
   const [mock, setMock] = useState<ActiveMockCheckpoint | null>(null)
+  const backgroundStarted = useRef(false)
+  const generationCancelled = useRef(false)
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const [finishing, setFinishing] = useState(false)
   const [result, setResult] = useState<{ correct: number; total: number; sessionId: string } | null>(null)
@@ -55,7 +76,9 @@ export function MockRunner() {
     await saveActiveMock({ ...value, checkpointedAt: new Date().toISOString() })
   }, [saveActiveMock])
 
-  // Restore a paused sitting, or build a fresh form.
+  // Restore a paused sitting, or build a fresh form. With an analyst configured
+  // the sitting opens on the prepare stage and the first passages are written
+  // before it can begin; without one it goes straight to the bank-built intro.
   useEffect(() => {
     if (loading || checkpointRef.current) return
     if (activeMock) {
@@ -67,11 +90,184 @@ export function MockRunner() {
       if (restored.remaining !== activeMock.remaining) void persist(restored)
       return
     }
-    const fresh = createCheckpoint(createMock())
-    checkpointRef.current = fresh
-    setMock(fresh)
-    void saveActiveMock(fresh)
-  }, [activeMock, loading, persist, saveActiveMock])
+    const bankBuilt = createCheckpoint(createMock())
+    const opening: ActiveMockCheckpoint = aiStatus.available
+      ? {
+        ...bankBuilt,
+        stage: 'prepare',
+        preparation: {
+          status: 'running',
+          total: LNAT_SPEC.sectionA.passages,
+          fresh: 0,
+          fallback: 0,
+          backgroundRemaining: LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES,
+          message: 'Waiting for the analyst',
+        },
+        freshPassageIds: [],
+      }
+      : bankBuilt
+    checkpointRef.current = opening
+    setMock(opening)
+    void saveActiveMock(opening)
+  }, [activeMock, aiStatus.available, loading, persist, saveActiveMock])
+
+  useEffect(() => () => { generationCancelled.current = true }, [])
+
+  /**
+   * Write one passage set at a time. A slot the analyst cannot deliver is not
+   * retried and does not stop the run: it is counted as a fallback and the bank
+   * covers it, which is how SATLAS treats a rejected generation batch.
+   */
+  const generatePassages = useCallback(async (
+    blueprints: ReturnType<typeof mockPassageBlueprints>,
+    onProgress: (fresh: number, fallback: number, index: number) => void,
+  ) => {
+    const passages: Passage[] = []
+    const questions: Question[] = []
+    let fallback = 0
+    for (const [index, blueprint] of blueprints.entries()) {
+      if (generationCancelled.current) break
+      try {
+        const result = await preparePassageSet(blueprint, 'mock')
+        passages.push(result.passage)
+        questions.push(...result.questions)
+      } catch {
+        fallback += 1
+      }
+      onProgress(passages.length, fallback, index + 1)
+    }
+    return { passages, questions, fallback }
+  }, [preparePassageSet])
+
+  /**
+   * Swap one freshly written passage set in for a bank passage the candidate has
+   * not reached. The guards are strict on purpose: a swap must never disturb
+   * recorded evidence or the 42-question blueprint, so a set is only exchanged
+   * for a bank set of the same size with no answers against it and not currently
+   * on screen. If nothing qualifies, the new set is simply kept in the store for
+   * a later sitting rather than forced in.
+   */
+  const swapInPassage = useCallback((passage: Passage, questions: Question[]) => {
+    updateMock((current) => {
+      const freshIds = new Set(current.freshPassageIds ?? [])
+      const displayed = current.questions[current.questionIndex]?.passageId
+      const target = current.passages.find((candidate) => {
+        if (freshIds.has(candidate.id) || candidate.id === displayed) return false
+        const set = current.questions.filter((question) => question.passageId === candidate.id)
+        if (set.length !== questions.length) return false
+        return set.every((question) => current.answers[question.id] === undefined)
+      })
+      if (!target) return current
+
+      let replaced = false
+      const nextQuestions = current.questions.flatMap((question) => {
+        if (question.passageId !== target.id) return [question]
+        if (replaced) return []
+        replaced = true
+        return questions
+      })
+      return {
+        ...current,
+        passages: current.passages.map((item) => item.id === target.id ? passage : item),
+        questions: nextQuestions,
+        freshPassageIds: [...freshIds, passage.id],
+      }
+    })
+  }, [updateMock])
+
+  const backgroundTopUp = useCallback(async (blueprints: ReturnType<typeof mockPassageBlueprints>, seed: number) => {
+    void seed
+    let remaining = blueprints.length
+    for (const blueprint of blueprints) {
+      if (generationCancelled.current) break
+      const stage = checkpointRef.current?.stage
+      // Stop writing once the paper is over; nothing can use it.
+      if (stage === 'complete' || stage === 'break' || stage === 'essay' || stage === 'essay-choice') break
+      try {
+        const result = await preparePassageSet(blueprint, 'mock')
+        swapInPassage(result.passage, result.questions)
+      } catch {
+        // A background failure is invisible: the bank passage already in the
+        // form stays exactly where it is.
+      }
+      remaining -= 1
+      updateMock((current) => current.preparation
+        ? { ...current, preparation: { ...current.preparation, backgroundRemaining: remaining } }
+        : current)
+    }
+    updateMock((current) => current.preparation
+      ? { ...current, preparation: { ...current.preparation, backgroundRemaining: 0 } }
+      : current)
+  }, [preparePassageSet, swapInPassage, updateMock])
+
+  // Foreground preparation: enough of the form to start reading.
+  useEffect(() => {
+    if (!mock || mock.stage !== 'prepare' || mock.preparation?.status !== 'running') return
+    if (backgroundStarted.current) return
+    backgroundStarted.current = true
+    let cancelled = false
+
+    const run = async () => {
+      const seed = Date.now()
+      const plan = mockPassageBlueprints(seed)
+      const { passages, questions, fallback } = await generatePassages(
+        plan.slice(0, FOREGROUND_PASSAGES),
+        (fresh, failed, index) => {
+          if (cancelled) return
+          updateMock((current) => ({
+            ...current,
+            preparation: {
+              status: 'running',
+              total: LNAT_SPEC.sectionA.passages,
+              fresh,
+              fallback: failed,
+              backgroundRemaining: LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES,
+              message: index >= FOREGROUND_PASSAGES ? 'Assembling the form' : `Passage ${index + 1} of ${FOREGROUND_PASSAGES}`,
+            },
+          }))
+        },
+      )
+      if (cancelled) return
+
+      // Rebuild the form with what was written, letting the bank cover the rest.
+      // The blueprint is never compromised: 12 passages and 42 questions either
+      // way, only the provenance of each slot changes.
+      let assembled: ActiveMockCheckpoint
+      try {
+        assembled = createCheckpoint(createMock(seed, { passages, questions }))
+      } catch {
+        assembled = createCheckpoint(createMock(seed))
+      }
+      const current = checkpointRef.current
+      const freshIds = passages.map((passage) => passage.id).filter((id) => assembled.passages.some((item) => item.id === id))
+      const next: ActiveMockCheckpoint = {
+        ...assembled,
+        // Keep the identity the store already knows about.
+        id: current?.id ?? assembled.id,
+        stage: 'intro',
+        freshPassageIds: freshIds,
+        preparation: {
+          status: passages.length ? 'complete' : 'failed',
+          total: LNAT_SPEC.sectionA.passages,
+          fresh: freshIds.length,
+          fallback,
+          backgroundRemaining: LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES,
+          message: passages.length
+            ? `${freshIds.length} passage${freshIds.length === 1 ? '' : 's'} written for this sitting`
+            : 'The analyst could not write anything; the whole form comes from the bank',
+        },
+      }
+      void persist(replaceMock(next))
+
+      // Everything after the opening passages is written while the candidate
+      // reads, and swapped in ahead of them.
+      void backgroundTopUp(plan.slice(FOREGROUND_PASSAGES), seed)
+    }
+
+    void run()
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mock?.stage, mock?.preparation?.status])
 
   // Checkpoint on a timer and on the way out, so a closed tab costs nothing.
   useEffect(() => {
@@ -239,6 +435,64 @@ export function MockRunner() {
     return <div className="app-loading" role="status"><div className="brand-mark">L</div><div className="loading-lines"><span /><span /><span /></div></div>
   }
 
+  // ---------------------------------------------------------------- prepare
+  if (mock.stage === 'prepare') {
+    const preparation = mock.preparation
+    const resolved = (preparation?.fresh ?? 0) + (preparation?.fallback ?? 0)
+    const percent = Math.round(Math.min(1, resolved / FOREGROUND_PASSAGES) * 100)
+    return (
+      <div className="mock-frame intro">
+        <section className="mock-intro" role="status" aria-live="polite">
+          <div className="preparing-mark"><Sparkle size={17} weight="fill" /></div>
+          <p className="eyebrow">Preparing your sitting</p>
+          <h1>Writing a form for you.</h1>
+          <p>
+            The analyst is writing the opening passages against your current calibration, and independently solving every
+            question on them before it reaches the paper. A passage set that does not survive that check is discarded, and
+            the bank covers that slot instead.
+          </p>
+          <p>
+            You can begin as soon as the first {FOREGROUND_PASSAGES} are ready. The remaining{' '}
+            {LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES} are written while you read and swapped in ahead of you, so
+            nothing waits on the clock.
+          </p>
+          <div className="preparing-progress" aria-label={`${percent}% of the opening passages are ready`}>
+            <div className="preparing-progress-heading">
+              <strong>{percent}% ready</strong>
+              <span>{resolved} of {FOREGROUND_PASSAGES} opening passages resolved</span>
+            </div>
+            <div className="preparing-progress-track"><i style={{ width: `${percent}%` }} /></div>
+            <div className="preparing-progress-meta">
+              <span>{preparation?.message ?? 'Waiting for the analyst'}</span>
+              <span>{preparation?.fresh ?? 0} fresh · {preparation?.fallback ?? 0} from the bank</span>
+            </div>
+          </div>
+          <div className="preparing-lines"><span /><span /><span /></div>
+          <div className="button-row">
+            <button
+              className="ghost-button"
+              onClick={() => {
+                // Skipping is always allowed: the bank-built form underneath is
+                // already a complete, valid paper.
+                generationCancelled.current = true
+                void persist(replaceMock({
+                  ...mock,
+                  stage: 'intro',
+                  preparation: mock.preparation
+                    ? { ...mock.preparation, status: 'complete', backgroundRemaining: 0, message: 'Preparation skipped; this form comes from the bank' }
+                    : undefined,
+                }))
+              }}
+            >
+              Skip and use the authored bank
+            </button>
+            <button className="text-button" onClick={() => navigate('/mocks')}>Not now</button>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
   // ------------------------------------------------------------------ intro
   if (mock.stage === 'intro') {
     return (
@@ -261,6 +515,18 @@ export function MockRunner() {
             <li>Your progress is checkpointed every ten seconds; closing the tab costs you nothing but the seconds it was shut.</li>
             <li>The result is a raw mark out of 42. That is what the LNAT reports, and this app will not invent anything beyond it.</li>
           </ul>
+          {mock.preparation && (
+            <p className="mock-provenance">
+              {mock.preparation.fresh
+                ? <>
+                  <strong>{mock.preparation.fresh} of the opening passages {mock.preparation.fresh === 1 ? 'was' : 'were'} written for this sitting</strong>
+                  {mock.preparation.fallback > 0 && <> and {mock.preparation.fallback} came from the authored bank</>}
+                  {mock.preparation.backgroundRemaining > 0 && <>. Another {mock.preparation.backgroundRemaining} {mock.preparation.backgroundRemaining === 1 ? 'is' : 'are'} being written while you read</>}
+                  .
+                </>
+                : <><strong>This form comes entirely from the authored bank.</strong> Every item in it has still been checked and is passage-bound.</>}
+            </p>
+          )}
           <div className="button-row">
             <button className="primary-button" onClick={() => { questionStarted.current = Date.now(); void persist(replaceMock({ ...mock, stage: 'section-a', startedAt: new Date().toISOString() })) }}>
               Begin Section A <ArrowRight size={16} />
@@ -338,6 +604,14 @@ export function MockRunner() {
             <Flag size={14} weight={flagged ? 'fill' : 'light'} />Flag
           </button>
           <button className="mock-tool" onClick={() => setNavigatorOpen((value) => !value)}><List size={14} weight="light" />Navigator</button>
+          {(mock.preparation?.backgroundRemaining ?? 0) > 0 && (
+            <span
+              className="analyst-pill working"
+              title="Later passages are still being written and will be swapped in before you reach them."
+            >
+              <i />{mock.preparation!.backgroundRemaining} being written
+            </span>
+          )}
           <button className="ghost-button" onClick={() => void abandon()}>Pause</button>
         </header>
 

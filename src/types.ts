@@ -444,7 +444,23 @@ export interface AiStatus {
   lastError?: string
 }
 
-export type MockStage = 'intro' | 'section-a' | 'review' | 'confirm' | 'break' | 'essay-choice' | 'essay' | 'complete'
+export type MockStage = 'prepare' | 'intro' | 'section-a' | 'review' | 'confirm' | 'break' | 'essay-choice' | 'essay' | 'complete'
+
+/**
+ * Progress of fresh-passage generation for one sitting. `fresh` and `fallback`
+ * always sum to the passages resolved so far, so a candidate can see exactly how
+ * much of the form was written for them and how much came from the bank.
+ */
+export interface MockPreparation {
+  status: 'idle' | 'running' | 'complete' | 'failed'
+  /** Passages requested from the analyst for this sitting. */
+  total: number
+  fresh: number
+  fallback: number
+  /** Passages still being written in the background after the sitting started. */
+  backgroundRemaining: number
+  message: string
+}
 
 export interface ActiveMockCheckpoint {
   id: string
@@ -466,6 +482,10 @@ export interface ActiveMockCheckpoint {
   checkpointedAt: string
   /** Built when Section A is submitted; retained so a paused sitting keeps its diagnosis. */
   scoreReport?: MockScoreReport
+  /** Fresh-generation progress. Absent on a sitting built entirely from the bank. */
+  preparation?: MockPreparation
+  /** Passage ids written for this sitting, so provenance survives a pause. */
+  freshPassageIds?: string[]
 }
 
 export interface LearningStateSnapshot {

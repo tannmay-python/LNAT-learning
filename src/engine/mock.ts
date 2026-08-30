@@ -2,7 +2,13 @@ import { essayPrompts } from '../data/essayPrompts'
 import { expansionPassages, expansionQuestions } from '../data/bankExpansion'
 import { passages as authoredPassages } from '../data/passages'
 import { questionBank } from '../data/questionBank'
-import type { ActiveMockCheckpoint, EssayPrompt, Passage, Question } from '../types'
+import { sectionASkillIds, skillById } from '../data/curriculum'
+import type {
+  ActiveMockCheckpoint, Difficulty, DomainId, EssayPrompt, Passage,
+  PassageBlueprint, PassageRegister, PassageTheme, Question,
+} from '../types'
+
+const domainForSkill = (skillId: string): DomainId => skillById.get(skillId)?.domain ?? 'argument'
 
 /**
  * The live LNAT: Section A is 42 multiple-choice questions on 12 passages in
@@ -44,6 +50,7 @@ export function buildForm(
   pool: Passage[],
   questions: Question[],
   seed = Date.now(),
+  freshPassageIds: Set<string> = new Set(),
 ): { passages: Passage[]; questions: Question[] } {
   const byPassage = new Map<string, Question[]>()
   for (const question of questions) {
@@ -51,7 +58,14 @@ export function buildForm(
     byPassage.get(question.passageId)!.push(question)
   }
   const usable = pool.filter((passage) => (byPassage.get(passage.id)?.length ?? 0) >= 3)
-  const ordered = mix(usable, seed)
+  // Passages written for this sitting are offered to the exact-cover pass first,
+  // so a repeat mock is genuinely new material rather than the bank reshuffled.
+  // The seeded order is preserved within each group.
+  const shuffled = mix(usable, seed)
+  const ordered = [
+    ...shuffled.filter((passage) => freshPassageIds.has(passage.id)),
+    ...shuffled.filter((passage) => !freshPassageIds.has(passage.id)),
+  ]
 
   const candidates = ordered.map((passage) => ({
     passage,
@@ -80,11 +94,26 @@ export function buildForm(
   }
 }
 
-export function createMock(seed = Date.now()): LnatMock {
+/** Everything the bank can offer, used as the fallback pool behind fresh material. */
+export const bankPool = () => ({
+  passages: [...authoredPassages, ...expansionPassages],
+  questions: [...questionBank, ...expansionQuestions],
+})
+
+/**
+ * Assemble a sitting. `fresh` holds passages written for this mock; they are
+ * preferred over the bank for every slot they can fill, and the bank covers
+ * whatever generation could not supply. A mock is never left short: if fresh
+ * material cannot complete the 42-question blueprint, the bank finishes it.
+ */
+export function createMock(seed = Date.now(), fresh?: { passages: Passage[]; questions: Question[] }): LnatMock {
+  const bank = bankPool()
+  const freshPassageIds = new Set((fresh?.passages ?? []).map((passage) => passage.id))
   const { passages, questions } = buildForm(
-    [...authoredPassages, ...expansionPassages],
-    [...questionBank, ...expansionQuestions],
+    [...(fresh?.passages ?? []), ...bank.passages],
+    [...(fresh?.questions ?? []), ...bank.questions],
     seed,
+    freshPassageIds,
   )
   return {
     id: crypto.randomUUID(),
@@ -92,6 +121,49 @@ export function createMock(seed = Date.now()): LnatMock {
     questions,
     prompts: mix(essayPrompts, seed + 29).slice(0, LNAT_SPEC.sectionB.prompts),
   }
+}
+
+/**
+ * The slot plan the analyst writes against for a full sitting.
+ *
+ * A real form is not twelve variations on one theme: it moves across subject
+ * areas, mixes single-author argument with composite extracts, and carries a
+ * spread of difficulty. These slots encode that spread deterministically from
+ * the seed, exactly as SATLAS plans its Math modules, so a generated mock is
+ * varied in the same way a released form is.
+ */
+export function mockPassageBlueprints(seed: number, count = LNAT_SPEC.sectionA.passages): PassageBlueprint[] {
+  const themes: PassageTheme[] = [
+    'law-and-ethics', 'politics-and-society', 'science-and-technology', 'arts-and-culture',
+    'education', 'economics', 'history', 'philosophy', 'media', 'environment',
+  ]
+  // Roughly one composite passage in four, which is what the published practice
+  // material shows, and the only register that generates attribution questions.
+  const registerAt = (index: number): PassageRegister =>
+    index % 4 === 3 ? 'multi-extract' : index % 5 === 1 ? 'opinion-column' : 'argumentative-essay'
+
+  const orderedThemes = mix(themes, seed + 7)
+  const skillCycle = mix(sectionASkillIds, seed + 13)
+
+  let cursor = 0
+  return Array.from({ length: count }, (_, index) => {
+    // Four-question sets on the first six passages and three on the rest gives
+    // 6*4 + 6*3 = 42, the published blueprint.
+    const questionCount = index < 6 ? 4 : 3
+    const questions = Array.from({ length: questionCount }, (_, slot) => {
+      const skillId = skillCycle[cursor % skillCycle.length]
+      cursor += 1
+      // Difficulty rises through each set: the first item on a passage is the
+      // way in, the last is the discriminating one.
+      const difficulty = Math.max(1, Math.min(5, 2 + slot + (index % 3 === 2 ? 1 : 0))) as Difficulty
+      return { domain: domainForSkill(skillId), skillId, difficulty }
+    })
+    return {
+      theme: orderedThemes[index % orderedThemes.length],
+      register: registerAt(index),
+      questions,
+    }
+  })
 }
 
 export function createCheckpoint(mock: LnatMock): ActiveMockCheckpoint {

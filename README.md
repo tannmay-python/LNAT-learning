@@ -139,6 +139,27 @@ fails that check, the complete passage set is discarded rather than weakened or
 padded. Raw evidence is always written to disk before any analysis runs, and a
 failed analysis never loses an answer.
 
+### Where fresh material is used
+
+Practice defaults to **fresh** wherever an analyst is configured — a set written
+against your own calibration is the point of connecting one. The bank is one
+toggle away, and covers any passage generation could not deliver.
+
+A full mock opens on a **prepare** stage. The first two passages are written
+before the sitting can begin; the remaining ten are written while you read and
+swapped in ahead of you, the same shape as SATLAS preparing its Math module
+during Reading and Writing. A passage set costs two model calls and runs to
+roughly three minutes, so the writer stays comfortably ahead of the reader from
+the first minute.
+
+The published blueprint is never negotiable. Whatever generation delivers, the
+form is 12 passages and 42 questions: fresh material is preferred for every slot
+it can fill and the authored bank covers the rest, so a sitting is never short,
+never padded, and never blocked on the model. Preparation is skippable at any
+point, and a background swap is refused unless the passage it would replace is
+the same size, unanswered, and not on screen — evidence already recorded can
+never be disturbed.
+
 ## Project-owned memory
 
 Everything lives in `data/`, which is git-ignored:
@@ -161,14 +182,16 @@ folder up, read it, or hand it to another tool without this app's cooperation.
 npm run check
 ```
 
-97 tests assert the things that matter: that the expanded pool can supply a
+108 tests assert the things that matter: that the expanded pool can supply a
 complete 42-question form across 12 passages; that every question has exactly
 five options labelled (a) to (e), one defensible answer, and a diagnosis for each
 of the four wrong ones; that every Section A skill is exercised and none
 dominates; that the mock reproduces the 95/40-minute blueprint with contiguous
 passage sets and correct scoring; that retry/duplicate attempts are canonicalized;
-that calibration survives corrupt stored values without producing `NaN`; and that
-the score model never leaves the 42-mark scale or projects beyond it.
+that calibration survives corrupt stored values without producing `NaN`; that the
+score model never leaves the 42-mark scale or projects beyond it; and that the
+generation plan requests exactly 42 slots across 12 varied passages while a
+part-generated form still assembles to the published blueprint.
 
 ## Content and rights boundary
 

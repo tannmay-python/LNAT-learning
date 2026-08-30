@@ -28,14 +28,17 @@ export function PracticePage() {
 
   const [started, setStarted] = useState(diagnostic || reviewOnly)
   const [passageCount, setPassageCount] = useState(diagnostic ? 3 : 2)
-  const [questionSource, setQuestionSource] = useState<QuestionSource>('authored')
+  // Fresh by default wherever an analyst is configured: a set written against
+  // the candidate's own calibration is the point of connecting one at all. The
+  // toggle falls back to the bank on its own when none is available.
+  const [questionSource, setQuestionSource] = useState<QuestionSource>('fresh')
   const [difficultyOverride, setDifficultyOverride] = useState<Difficulty | 'adaptive'>('adaptive')
   const [drillSkillId, setDrillSkillId] = useState<string | undefined>(skillFromUrl)
   const drillSkill = drillSkillId ? skillById.get(drillSkillId) : undefined
 
   const [preparing, setPreparing] = useState(false)
   const [preparationNotice, setPreparationNotice] = useState('')
-  const [preparationProgress, setPreparationProgress] = useState({ ready: 0, total: 0 })
+  const [preparationProgress, setPreparationProgress] = useState({ ready: 0, total: 0, fresh: 0, fallback: 0 })
 
   const [plan, setPlan] = useState<Array<{ passage: Passage; questions: Question[] }>>([])
   const [passageIndex, setPassageIndex] = useState(0)
@@ -100,10 +103,11 @@ export function PracticePage() {
     setPreparationNotice('')
     if (questionSource === 'fresh' && aiStatus.available) {
       setPreparing(true)
-      setPreparationProgress({ ready: 0, total: passageCount })
+      setPreparationProgress({ ready: 0, total: passageCount, fresh: 0, fallback: 0 })
       const prepared: Array<{ passage: Passage; questions: Question[] }> = []
       const seenQuestionIds = new Set(attempts.map((attempt) => attempt.questionId))
       const themes = ['law-and-ethics', 'politics-and-society', 'science-and-technology', 'philosophy', 'media', 'economics'] as const
+      let failed = 0
       try {
         for (let index = 0; index < passageCount; index += 1) {
           const slots = drillSkill
@@ -119,13 +123,17 @@ export function PracticePage() {
           } catch {
             // A failed passage falls back to the authored bank rather than
             // blocking the whole set on one model timeout.
+            failed += 1
           }
-          setPreparationProgress({ ready: index + 1, total: passageCount })
+          setPreparationProgress({ ready: index + 1, total: passageCount, fresh: prepared.length, fallback: failed })
         }
         if (prepared.length < passageCount) {
+          const written = prepared.length
           const fallback = buildAuthoredPlan().filter((entry) => !prepared.some((item) => item.passage.id === entry.passage.id))
-          prepared.push(...fallback.slice(0, passageCount - prepared.length))
-          setPreparationNotice(`${prepared.length - (passageCount - fallback.length)} of ${passageCount} passages were written fresh. The rest come from the authored bank.`)
+          prepared.push(...fallback.slice(0, passageCount - written))
+          setPreparationNotice(written
+            ? `${written} of ${passageCount} passages were written for you. The remaining ${prepared.length - written} come from the authored bank.`
+            : 'No passage could be written just now, so the whole set comes from the authored bank. Every item in it is still checked and passage-bound.')
         }
       } finally {
         setPreparing(false)
@@ -264,6 +272,10 @@ export function PracticePage() {
             <span>{preparationProgress.ready} of {preparationProgress.total} passages resolved</span>
           </div>
           <div className="preparing-progress-track"><i style={{ width: `${percent}%` }} /></div>
+          <div className="preparing-progress-meta">
+            <span>{preparationProgress.ready >= preparationProgress.total ? 'Assembling the set' : `Passage ${preparationProgress.ready + 1} of ${preparationProgress.total}`}</span>
+            <span>{preparationProgress.fresh} fresh · {preparationProgress.fallback} from the bank</span>
+          </div>
         </div>
         <div className="preparing-lines"><span /><span /><span /></div>
       </section>

@@ -322,6 +322,8 @@ input[type="range"] { min-height: 22px; padding: 0; border: 0; accent-color: var
 .preparing-progress-heading span { color: var(--faint); font-size: 11px; }
 .preparing-progress-track { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
 .preparing-progress-track i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.preparing-progress-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--faint); font-size: 10.5px; }
+.preparing-progress-meta span:last-child { color: var(--accent); font-weight: 650; }
 .preparing-lines { display: flex; gap: 5px; }
 .preparing-lines span { width: 18px; height: 2px; background: var(--line-strong); animation: pulse 1.2s infinite; }
 .preparing-lines span:nth-child(2) { animation-delay: .12s; }
@@ -596,6 +598,10 @@ input[type="range"] { min-height: 22px; padding: 0; border: 0; accent-color: var
 .history-training-plan { display: grid; gap: 8px; width: 100%; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .measurement-section { grid-column: 1 / -1; }
 .mock-rules { margin: 4px 0 8px; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.mock-provenance { margin: 0 0 4px !important; padding: 11px 14px; border-left: 3px solid var(--accent); border-radius: 0 5px 5px 0; background: var(--surface-3); color: var(--muted) !important; font-size: 12px !important; }
+.mock-provenance strong { color: var(--text); }
+.mock-intro .preparing-mark { margin-bottom: 4px; }
+.mock-intro .preparing-progress { width: 100%; max-width: 460px; }
 .mock-bar { position: sticky; top: 0; z-index: 20; min-height: 52px; padding: 0 20px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(12px); }
 .mock-label { color: var(--muted); font-size: 11px; font-weight: 700; }
 .mock-progress { flex: 1; min-width: 90px; height: 2px; border-radius: 2px; background: var(--line); overflow: hidden; }

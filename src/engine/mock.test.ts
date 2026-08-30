@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildForm, createCheckpoint, createMock, LNAT_SPEC, passageGroups, questionLocation } from './mock'
+import { bankPool, buildForm, createCheckpoint, createMock, LNAT_SPEC, mockPassageBlueprints, passageGroups, questionLocation } from './mock'
+import { skillById } from '../data/curriculum'
 import { passages } from '../data/passages'
 import { questionBank } from '../data/questionBank'
 import { rawScore } from './questions'
@@ -121,5 +122,110 @@ describe('scoring', () => {
     const mock = createMock(31)
     const answers = Object.fromEntries(mock.questions.map((question) => [question.id, question.answer]))
     expect(rawScore(mock.questions, answers).correct).toBe(42)
+  })
+})
+
+describe('fresh-generation pipeline', () => {
+  const bank = bankPool()
+
+  /** A stand-in for a passage the analyst wrote for this sitting. */
+  const freshSet = (id: string, count: number) => {
+    const model = bank.passages[0]
+    const template = bank.questions.filter((question) => question.passageId === bank.passages[0].id)[0]
+    return {
+      passage: { ...model, id, title: `Fresh ${id}`, source: 'ai-generated' as const },
+      questions: Array.from({ length: count }, (_, index) => ({
+        ...template,
+        id: `${id}-q${index}`,
+        passageId: id,
+        source: 'ai-generated' as const,
+      })),
+    }
+  }
+
+  it('still builds the published blueprint when nothing was generated', () => {
+    const mock = createMock(41, { passages: [], questions: [] })
+    expect(mock.passages).toHaveLength(LNAT_SPEC.sectionA.passages)
+    expect(mock.questions).toHaveLength(LNAT_SPEC.sectionA.questions)
+  })
+
+  it('prefers generated passages over the bank', () => {
+    const fresh = [freshSet('fresh-a', 4), freshSet('fresh-b', 4), freshSet('fresh-c', 3)]
+    const mock = createMock(41, {
+      passages: fresh.map((item) => item.passage),
+      questions: fresh.flatMap((item) => item.questions),
+    })
+    const used = mock.passages.filter((passage) => passage.source === 'ai-generated')
+    expect(used.length).toBeGreaterThan(0)
+    expect(mock.questions).toHaveLength(LNAT_SPEC.sectionA.questions)
+  })
+
+  it('never lets generated material break the 42-question blueprint', () => {
+    for (const seed of [1, 7, 19, 53]) {
+      const fresh = [freshSet(`s${seed}-a`, 4), freshSet(`s${seed}-b`, 3)]
+      const mock = createMock(seed, {
+        passages: fresh.map((item) => item.passage),
+        questions: fresh.flatMap((item) => item.questions),
+      })
+      expect(mock.questions, `seed ${seed}`).toHaveLength(LNAT_SPEC.sectionA.questions)
+      expect(mock.passages, `seed ${seed}`).toHaveLength(LNAT_SPEC.sectionA.passages)
+      expect(new Set(mock.questions.map((question) => question.id)).size).toBe(LNAT_SPEC.sectionA.questions)
+    }
+  })
+
+  it('ignores a generated passage whose set is too small to be usable', () => {
+    const stunted = freshSet('too-small', 2)
+    const mock = createMock(41, { passages: [stunted.passage], questions: stunted.questions })
+    expect(mock.passages.some((passage) => passage.id === 'too-small')).toBe(false)
+    expect(mock.questions).toHaveLength(LNAT_SPEC.sectionA.questions)
+  })
+})
+
+describe('the mock generation plan', () => {
+  it('requests one passage set per passage on the form', () => {
+    expect(mockPassageBlueprints(5)).toHaveLength(LNAT_SPEC.sectionA.passages)
+  })
+
+  it('requests exactly 42 question slots, in sets of three or four', () => {
+    const plan = mockPassageBlueprints(5)
+    const total = plan.reduce((sum, entry) => sum + entry.questions.length, 0)
+    expect(total).toBe(LNAT_SPEC.sectionA.questions)
+    for (const entry of plan) {
+      expect(entry.questions.length).toBeGreaterThanOrEqual(3)
+      expect(entry.questions.length).toBeLessThanOrEqual(4)
+    }
+  })
+
+  it('names only skills that exist, with their own domain', () => {
+    for (const entry of mockPassageBlueprints(11)) {
+      for (const slot of entry.questions) {
+        const skill = skillById.get(slot.skillId)
+        expect(skill, slot.skillId).toBeDefined()
+        expect(skill?.section).toBe('section-a')
+        expect(slot.domain).toBe(skill?.domain)
+        expect(slot.difficulty).toBeGreaterThanOrEqual(1)
+        expect(slot.difficulty).toBeLessThanOrEqual(5)
+      }
+    }
+  })
+
+  it('spreads subject areas rather than repeating one', () => {
+    const themes = new Set(mockPassageBlueprints(11).map((entry) => entry.theme))
+    expect(themes.size).toBeGreaterThanOrEqual(6)
+  })
+
+  it('asks for composite extracts as well as single-author argument', () => {
+    const registers = new Set(mockPassageBlueprints(11).map((entry) => entry.register))
+    expect(registers.has('multi-extract')).toBe(true)
+    expect(registers.size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('covers a wide span of the skill map across one form', () => {
+    const skills = new Set(mockPassageBlueprints(11).flatMap((entry) => entry.questions.map((slot) => slot.skillId)))
+    expect(skills.size).toBeGreaterThanOrEqual(12)
+  })
+
+  it('is reproducible for a given seed', () => {
+    expect(JSON.stringify(mockPassageBlueprints(3))).toBe(JSON.stringify(mockPassageBlueprints(3)))
   })
 })
