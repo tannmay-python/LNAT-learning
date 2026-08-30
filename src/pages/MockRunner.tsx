@@ -47,6 +47,8 @@ export function MockRunner() {
   const backgroundStarted = useRef(false)
   const generationCancelled = useRef(false)
   const [navigatorOpen, setNavigatorOpen] = useState(false)
+  /** Seconds spent preparing, so a multi-minute write never looks like a stall. */
+  const [preparingFor, setPreparingFor] = useState(0)
   const [finishing, setFinishing] = useState(false)
   const [result, setResult] = useState<{ correct: number; total: number; sessionId: string } | null>(null)
   const [savedEssayId, setSavedEssayId] = useState<string>()
@@ -113,6 +115,12 @@ export function MockRunner() {
 
   useEffect(() => () => { generationCancelled.current = true }, [])
 
+  useEffect(() => {
+    if (mock?.stage !== 'prepare') return
+    const timer = window.setInterval(() => setPreparingFor((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [mock?.stage])
+
   /**
    * Write one passage set at a time. A slot the analyst cannot deliver is not
    * retried and does not stop the run: it is counted as a fallback and the bank
@@ -121,12 +129,17 @@ export function MockRunner() {
   const generatePassages = useCallback(async (
     blueprints: ReturnType<typeof mockPassageBlueprints>,
     onProgress: (fresh: number, fallback: number, index: number) => void,
+    onBegin?: (index: number) => void,
   ) => {
     const passages: Passage[] = []
     const questions: Question[] = []
     let fallback = 0
     for (const [index, blueprint] of blueprints.entries()) {
       if (generationCancelled.current) break
+      // Announce the slot before the call, not after it: a passage takes a few
+      // minutes to write and solve, and a progress bar that only moves on
+      // completion looks indistinguishable from one that has hung.
+      onBegin?.(index)
       try {
         const result = await preparePassageSet(blueprint, 'mock')
         passages.push(result.passage)
@@ -222,7 +235,21 @@ export function MockRunner() {
               fresh,
               fallback: failed,
               backgroundRemaining: LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES,
-              message: index >= FOREGROUND_PASSAGES ? 'Assembling the form' : `Passage ${index + 1} of ${FOREGROUND_PASSAGES}`,
+              message: index >= FOREGROUND_PASSAGES ? 'Assembling the form' : `Passage ${index + 1} of ${FOREGROUND_PASSAGES} written`,
+            },
+          }))
+        },
+        (index) => {
+          if (cancelled) return
+          updateMock((current) => ({
+            ...current,
+            preparation: {
+              status: 'running',
+              total: LNAT_SPEC.sectionA.passages,
+              fresh: current.preparation?.fresh ?? 0,
+              fallback: current.preparation?.fallback ?? 0,
+              backgroundRemaining: LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES,
+              message: `Writing passage ${index + 1} of ${FOREGROUND_PASSAGES}`,
             },
           }))
         },
@@ -452,7 +479,8 @@ export function MockRunner() {
             the bank covers that slot instead.
           </p>
           <p>
-            You can begin as soon as the first {FOREGROUND_PASSAGES} are ready. The remaining{' '}
+            You can begin as soon as the first {FOREGROUND_PASSAGES} are ready — around three minutes each, since every
+            set is written and then solved again from scratch. The remaining{' '}
             {LNAT_SPEC.sectionA.passages - FOREGROUND_PASSAGES} are written while you read and swapped in ahead of you, so
             nothing waits on the clock.
           </p>
@@ -463,7 +491,7 @@ export function MockRunner() {
             </div>
             <div className="preparing-progress-track"><i style={{ width: `${percent}%` }} /></div>
             <div className="preparing-progress-meta">
-              <span>{preparation?.message ?? 'Waiting for the analyst'}</span>
+              <span>{preparation?.message ?? 'Waiting for the analyst'} · {formatTime(preparingFor)} elapsed</span>
               <span>{preparation?.fresh ?? 0} fresh · {preparation?.fallback ?? 0} from the bank</span>
             </div>
           </div>
